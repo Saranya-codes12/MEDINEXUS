@@ -123,13 +123,6 @@ class _OverviewState extends State<_Overview> {
 
   bool get _needsAttention => openEmergencies > 0 || (stock['critical'] ?? 0) > 0;
 
-  String _dateLabel() {
-    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    final n = DateTime.now();
-    return '${days[n.weekday - 1]}, ${n.day} ${months[n.month - 1]} ${n.year}';
-  }
-
   List<Map<String, String>> get _alerts {
     final list = <Map<String, String>>[];
     if (openEmergencies > 0) {
@@ -159,12 +152,9 @@ class _OverviewState extends State<_Overview> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Date line (replaces the "Welcome back" greeting)
-          Text(
-            _dateLabel(),
-            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: AppColors.muted),
-          ),
-          const SizedBox(height: 10),
+          // Greeting
+          Text('Welcome back!', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 16),
 
           // Facility card
           if (facility != null)
@@ -264,13 +254,15 @@ class _OverviewState extends State<_Overview> {
 
           // Quick Actions (switch bottom tabs, so the nav bar stays visible)
           const SectionHeader(title: 'Quick Actions'),
-          GridView.count(
-            crossAxisCount: 2,
+          GridView(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: 1.9,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              mainAxisExtent: 108, // fixed height: no overflow on any screen width
+            ),
             children: [
               QuickActionCard(icon: Icons.checklist_outlined, label: 'Attendance', subtitle: 'Mark today', color: AppColors.teal, onTap: () => widget.onNavigate(1)),
               QuickActionCard(icon: Icons.groups_outlined, label: 'Patients', subtitle: 'Log entry', color: AppColors.vital, onTap: () => widget.onNavigate(2)),

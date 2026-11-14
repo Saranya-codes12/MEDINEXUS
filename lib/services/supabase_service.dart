@@ -72,7 +72,16 @@ class SupabaseService {
   // Attendance (basic CRUD — used by dashboards/other screens)
   // ---------------------------------------------------------------------------
 
-  static Stream<List<Map<String, dynamic>>> attendanceStream(String facilityId) {
+  /// A facility user passes the facility id. The district admin passes null
+  /// to follow the latest attendance of every facility.
+  static Stream<List<Map<String, dynamic>>> attendanceStream(String? facilityId) {
+    if (facilityId == null) {
+      return client
+          .from('doctor_attendance')
+          .stream(primaryKey: ['id'])
+          .order('date', ascending: false)
+          .limit(300);
+    }
     return client
         .from('doctor_attendance')
         .stream(primaryKey: ['id'])
@@ -338,7 +347,7 @@ class SupabaseService {
     return List<Map<String, dynamic>>.from(data);
   }
 
-  static Future<void> registerDevice({required String facilityId, String deviceType = 'fingerprint'}) async {
+  static Future<void> registerDevice({required String facilityId, String deviceType = 'face'}) async {
     await client.from('biometric_devices').insert({'facility_id': facilityId, 'device_type': deviceType});
   }
 
@@ -361,9 +370,11 @@ class SupabaseService {
   }
 
   // ---------------------------------------------------------------------------
-  // Biometric Attendance (replaces free-text markAttendance going forward)
+  // Attendance with verification method (face / manual override)
   // ---------------------------------------------------------------------------
 
+  /// Kept for older screens. Face-verified records use [recordFaceAttendance];
+  /// anything without a device is stored as a manual override.
   static Future<void> recordBiometricAttendance({
     required String facilityId,
     required String employeeId,
@@ -382,9 +393,137 @@ class SupabaseService {
       'status': status,
       'date': date,
       'device_id': deviceId,
-      'verification_method': deviceId != null ? 'biometric' : 'manual_override',
+      'verification_method': deviceId != null ? 'face' : 'manual_override',
       'marked_by': markedBy,
     });
+  }
+
+  /// Attendance that was verified by face recognition.
+  /// [matchScore] is the cosine similarity of the match, stored for audit.
+  static Future<void> recordFaceAttendance({
+    required String facilityId,
+    required String employeeId,
+    required String employeeName,
+    String? designation,
+    required String date,
+    required String markedBy,
+    required double matchScore,
+    String status = 'present',
+  }) async {
+    await client.from('doctor_attendance').insert({
+      'facility_id': facilityId,
+      'employee_id': employeeId,
+      'doctor_name': employeeName,
+      'designation': designation,
+      'status': status,
+      'date': date,
+      'verification_method': 'face',
+      'face_match_score': double.parse(matchScore.toStringAsFixed(4)),
+      'marked_by': markedBy,
+    });
+  }
+
+  /// Attendance entered by hand when face verification is not possible.
+  /// It is stored with its own verification method so DDHS can review it.
+  static Future<void> recordManualOverrideAttendance({
+    required String facilityId,
+    required String employeeId,
+    required String employeeName,
+    String? designation,
+    required String status,
+    required String date,
+    required String markedBy,
+  }) async {
+    await client.from('doctor_attendance').insert({
+      'facility_id': facilityId,
+      'employee_id': employeeId,
+      'doctor_name': employeeName,
+      'designation': designation,
+      'status': status,
+      'date': date,
+      'verification_method': 'manual_override',
+      'marked_by': markedBy,
+    });
+  }
+
+  /// True when the employee already has an attendance record for [date].
+  static Future<bool> hasAttendanceToday({required String employeeId, required String date}) async {
+    final data = await client
+        .from('doctor_attendance')
+        .select('id')
+        .eq('employee_id', employeeId)
+        .eq('date', date)
+        .limit(1);
+    return (data as List).isNotEmpty;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Face templates (numeric face embeddings, no photos are stored)
+  // ---------------------------------------------------------------------------
+
+  /// Replaces all templates of an employee with [embeddings].
+  static Future<void> saveFaceTemplates({
+    required String employeeId,
+    required String facilityId,
+    required List<List<double>> embeddings,
+    required String enrolledBy,
+    String modelName = 'mobilefacenet',
+  }) async {
+    await client.from('face_templates').delete().eq('employee_id', employeeId);
+    await client.from('face_templates').insert([
+      for (final e in embeddings)
+        {
+          'employee_id': employeeId,
+          'facility_id': facilityId,
+          'embedding': e,
+          'model_name': modelName,
+          'enrolled_by': enrolledBy,
+        },
+    ]);
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchFaceTemplates(String facilityId) async {
+    final data = await client
+        .from('face_templates')
+        .select('employee_id, embedding')
+        .eq('facility_id', facilityId);
+    return List<Map<String, dynamic>>.from(data);
+  }
+
+  static Future<Set<String>> fetchEnrolledEmployeeIds(String facilityId) async {
+    final rows = await fetchFaceTemplates(facilityId);
+    return rows.map((r) => r['employee_id'].toString()).toSet();
+  }
+
+  /// Withdraws consent: removes every face template of the employee.
+  static Future<void> deleteFaceTemplates(String employeeId) async {
+    await client.from('face_templates').delete().eq('employee_id', employeeId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Face alerts (unrecognised face tried to mark attendance)
+  // ---------------------------------------------------------------------------
+
+  static Future<void> reportFaceAlert({
+    required String facilityId,
+    required String reason,
+    required double bestScore,
+    required String reportedBy,
+  }) async {
+    await client.from('face_alerts').insert({
+      'facility_id': facilityId,
+      'reason': reason,
+      'best_score': double.parse(bestScore.toStringAsFixed(4)),
+      'reported_by': reportedBy,
+    });
+  }
+
+  static Stream<List<Map<String, dynamic>>> faceAlertsStream() {
+    return client
+        .from('face_alerts')
+        .stream(primaryKey: ['id'])
+        .order('created_at', ascending: false)
+        .limit(20);
   }
 
   // ---------------------------------------------------------------------------
